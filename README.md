@@ -15,9 +15,9 @@ Originally by Small Hedge Games (08/04/2024).
 
 Copy these scripts into your Unity project (e.g. `Assets/Scripts/AnimatorCoder/`):
 
-- `AnimatorCoder.cs`
-- `AnimatorValues.cs`
-- `OnParameter.cs`
+- `Runtime/AnimatorCoder.cs`
+- `Runtime/AnimatorValues.cs`
+- `Runtime/OnParameter.cs`
 
 ## Setup
 
@@ -98,4 +98,3 @@ SetBool(Parameters.GROUNDED, true);
 ## License
 
 CC0 1.0 Universal. See `LICENSE`.
-
