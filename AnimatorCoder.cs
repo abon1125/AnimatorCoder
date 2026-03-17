@@ -14,30 +14,38 @@ namespace SHG.AnimatorCoder
         private Animator animator;
         private Animations[] currentAnimation;
         private bool[] layerLocked;
-        private ParameterDisplay[] parameters;
-        private Coroutine currentCoroutine = null;
+        [SerializeField] private ParameterDisplay[] parameters;
+        private Coroutine[] currentCoroutines;
 
         /// <summary> Sets up the Animator Brain </summary>
         public void Initialize()
         {
             AnimatorValues.Initialize();
 
-            Animator animator = GetComponent<Animator>();
+            animator = GetComponent<Animator>();
+            if (animator == null)
+            {
+                LogError("Missing Animator component");
+                return;
+            }
+
             layerLocked = new bool[animator.layerCount];
             currentAnimation = new Animations[animator.layerCount];
-            this.animator = animator;
+            currentCoroutines = new Coroutine[animator.layerCount];
 
             for (int i = 0; i < animator.layerCount; ++i)
             {
                 layerLocked[i] = false;
+                currentAnimation[i] = Animations.RESET;
+                currentCoroutines[i] = null;
 
-                int hash = animator.GetCurrentAnimatorStateInfo(i).fullPathHash;
+                int hash = animator.GetCurrentAnimatorStateInfo(i).shortNameHash;
                 for (int k = 0; k < AnimatorValues.Animations.Length; ++k)
                 {
-                    if (hash == AnimatorValues.Animations[i])
+                    if (hash == AnimatorValues.Animations[k])
                     {
-                        currentAnimation[i] = (Animations)Enum.GetValues(typeof(Animations)).GetValue(k);
-                        k = AnimatorValues.Animations.Length;
+                        currentAnimation[i] = (Animations)k;
+                        break;
                     }
                 }
             }
@@ -123,6 +131,18 @@ namespace SHG.AnimatorCoder
         {
             try
             {
+                if (animator == null || currentAnimation == null || layerLocked == null || currentCoroutines == null)
+                {
+                    LogError("Please Initialize() in Start()");
+                    return false;
+                }
+
+                if (data == null)
+                {
+                    LogError("AnimationData is null");
+                    return false;
+                }
+
                 if (data.animation == Animations.RESET)
                 {
                     DefaultAnimation(layer);
@@ -131,7 +151,7 @@ namespace SHG.AnimatorCoder
 
                 if (layerLocked[layer] || currentAnimation[layer] == data.animation) return false;
 
-                if (currentCoroutine != null) StopCoroutine(currentCoroutine);
+                if (currentCoroutines[layer] != null) StopCoroutine(currentCoroutines[layer]);
                 layerLocked[layer] = data.lockLayer;
                 currentAnimation[layer] = data.animation;
 
@@ -139,13 +159,13 @@ namespace SHG.AnimatorCoder
 
                 if (data.nextAnimation != null)
                 {
-                    currentCoroutine = StartCoroutine(Wait());
+                    currentCoroutines[layer] = StartCoroutine(Wait());
                     IEnumerator Wait()
                     {
                         animator.Update(0);
                         float delay = animator.GetNextAnimatorStateInfo(layer).length;
                         if (data.crossfade == 0) delay = animator.GetCurrentAnimatorStateInfo(layer).length;
-                        yield return new WaitForSeconds(delay - data.nextAnimation.crossfade);
+                        yield return new WaitForSeconds(Mathf.Max(0f, delay - data.nextAnimation.crossfade));
                         SetLocked(false, layer);
                         Play(data.nextAnimation, layer);
                     }
@@ -223,7 +243,7 @@ namespace SHG.AnimatorCoder
     [Serializable]
     public struct ParameterDisplay
     {
-        [HideInInspector] public string name;
+        public string name;
         public bool value;
     }
 }
