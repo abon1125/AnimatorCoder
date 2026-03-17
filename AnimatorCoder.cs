@@ -1,5 +1,5 @@
-//Author: Small Hedge Games
-//Date: 08/04/2024
+// Author: Small Hedge Games
+// Date: 08/04/2024
 
 using System.Collections;
 using UnityEngine;
@@ -7,6 +7,21 @@ using System;
 
 namespace SHG.AnimatorCoder
 {
+    /// <summary>
+    /// Lightweight Animator state controller that uses <see cref="Animations"/> / <see cref="Parameters"/> enums
+    /// as strongly-typed IDs.
+    ///
+    /// Usage:
+    /// 1) Create a MonoBehaviour that inherits <see cref="AnimatorCoder"/>
+    /// 2) Implement <see cref="DefaultAnimation(int)"/> per layer
+    /// 3) Call <see cref="Initialize"/> once (typically in Start)
+    /// 4) Call <see cref="Play(AnimationData,int)"/> to request animations
+    ///
+    /// Notes:
+    /// - This does NOT set Unity Animator parameters; <see cref="SetBool"/> / <see cref="GetBool"/> are internal flags
+    ///   intended for behaviours like <see cref="OnParameter"/>.
+    /// - Enum names in <see cref="Animations"/> should match Animator state's short name exactly (e.g. "IDLE").
+    /// </summary>
     public abstract class AnimatorCoder : MonoBehaviour
     {
         /// <summary> The baseline animation logic on a specific layer </summary>
@@ -14,8 +29,14 @@ namespace SHG.AnimatorCoder
         private Animator animator;
         private Animations[] currentAnimation;
         private bool[] layerLocked;
+        // Debug-friendly view of the internal flag store in the Inspector.
+        // Initialized from the Parameters enum; user edits will be overwritten on Initialize().
         [SerializeField] private ParameterDisplay[] parameters;
         private Coroutine[] currentCoroutines;
+        private bool isInitialized = false;
+
+        /// <summary> True after <see cref="Initialize"/> has successfully run. </summary>
+        public bool IsInitialized => isInitialized;
 
         /// <summary> Sets up the Animator Brain </summary>
         public void Initialize()
@@ -26,6 +47,7 @@ namespace SHG.AnimatorCoder
             if (animator == null)
             {
                 LogError("Missing Animator component");
+                isInitialized = false;
                 return;
             }
 
@@ -39,6 +61,8 @@ namespace SHG.AnimatorCoder
                 currentAnimation[i] = Animations.RESET;
                 currentCoroutines[i] = null;
 
+                // We compare against shortNameHash so enum names can simply be "IDLE", "RUN", ...
+                // (fullPathHash usually includes layer/path and will not match Animator.StringToHash("IDLE").)
                 int hash = animator.GetCurrentAnimatorStateInfo(i).shortNameHash;
                 for (int k = 0; k < AnimatorValues.Animations.Length; ++k)
                 {
@@ -57,132 +81,166 @@ namespace SHG.AnimatorCoder
                 parameters[i].name = names[i];
                 parameters[i].value = false;
             }
+
+            isInitialized = true;
         }
 
         /// <summary> Returns the current animation that is playing </summary>
         public Animations GetCurrentAnimation(int layer)
         {
-            try
-            {
-                return currentAnimation[layer];
-            }
-            catch
+            if (!IsValidLayer(layer))
             {
                 LogError("Can't retrieve Current Animation. Fix: Initialize() in Start() and don't exceed number of animator layers");
                 return Animations.RESET;
             }
+
+            return currentAnimation[layer];
         }
 
         /// <summary> Sets the whole layer to be locked or unlocked </summary>
         public void SetLocked(bool lockLayer, int layer)
         {
-            try
+            if (!IsValidLayer(layer))
             {
-                layerLocked[layer] = lockLayer;
+                LogError("Can't set layer lock. Fix: Initialize() in Start() and don't exceed number of animator layers");
+                return;
             }
-            catch
-            {
-                LogError("Can't retrieve Current Animation. Fix: Initialize() in Start() and don't exceed number of animator layers");
-            }
+
+            layerLocked[layer] = lockLayer;
         }
 
         public bool IsLocked(int layer)
         {
-            try
+            if (!IsValidLayer(layer))
             {
-                return layerLocked[layer];
-            }
-            catch
-            {
-                LogError("Can't retrieve Current Animation. Fix: Initialize() in Start() and don't exceed number of animator layers");
+                LogError("Can't retrieve layer lock state. Fix: Initialize() in Start() and don't exceed number of animator layers");
                 return false;
             }
+
+            return layerLocked[layer];
         }
 
-        /// <summary> Sets an animator parameter </summary>
+        /// <summary>
+        /// Sets an internal flag (NOT a Unity Animator parameter).
+        /// Used by <see cref="OnParameter"/> to drive animation chains.
+        /// </summary>
         public void SetBool(Parameters id, bool value)
         {
-            try
-            {
-                parameters[(int)id].value = value;
-            }
-            catch
+            if (!isInitialized || parameters == null)
             {
                 LogError("Please Initialize() in Start()");
+                return;
             }
+
+            int index = (int)id;
+            if (index < 0 || index >= parameters.Length)
+            {
+                LogError("Parameter index out of range (update Parameters enum / Initialize)");
+                return;
+            }
+
+            parameters[index].value = value;
         }
 
-        /// <summary> Returns an animator parameter </summary>
+        /// <summary> Returns an internal flag (NOT a Unity Animator parameter). </summary>
         public bool GetBool(Parameters id)
         {
-            try
-            {
-                return parameters[(int)id].value;
-            }
-            catch
+            if (!isInitialized || parameters == null)
             {
                 LogError("Please Initialize() in Start()");
                 return false;
             }
+
+            int index = (int)id;
+            if (index < 0 || index >= parameters.Length)
+            {
+                LogError("Parameter index out of range (update Parameters enum / Initialize)");
+                return false;
+            }
+
+            return parameters[index].value;
         }
 
         /// <summary> Takes in the animation details and the animation layer, then attempts to play the animation </summary>
         public bool Play(AnimationData data, int layer = 0)
         {
-            try
-            {
-                if (animator == null || currentAnimation == null || layerLocked == null || currentCoroutines == null)
-                {
-                    LogError("Please Initialize() in Start()");
-                    return false;
-                }
-
-                if (data == null)
-                {
-                    LogError("AnimationData is null");
-                    return false;
-                }
-
-                if (data.animation == Animations.RESET)
-                {
-                    DefaultAnimation(layer);
-                    return false;
-                }
-
-                if (layerLocked[layer] || currentAnimation[layer] == data.animation) return false;
-
-                if (currentCoroutines[layer] != null) StopCoroutine(currentCoroutines[layer]);
-                layerLocked[layer] = data.lockLayer;
-                currentAnimation[layer] = data.animation;
-
-                animator.CrossFade(AnimatorValues.GetHash(currentAnimation[layer]), data.crossfade, layer);
-
-                if (data.nextAnimation != null)
-                {
-                    currentCoroutines[layer] = StartCoroutine(Wait());
-                    IEnumerator Wait()
-                    {
-                        animator.Update(0);
-                        float delay = animator.GetNextAnimatorStateInfo(layer).length;
-                        if (data.crossfade == 0) delay = animator.GetCurrentAnimatorStateInfo(layer).length;
-                        yield return new WaitForSeconds(Mathf.Max(0f, delay - data.nextAnimation.crossfade));
-                        SetLocked(false, layer);
-                        Play(data.nextAnimation, layer);
-                    }
-                }
-
-                return true;
-            }
-            catch
+            if (!isInitialized || animator == null || currentAnimation == null || layerLocked == null || currentCoroutines == null)
             {
                 LogError("Please Initialize() in Start()");
                 return false;
             }
+
+            if (data == null)
+            {
+                LogError("AnimationData is null");
+                return false;
+            }
+
+            if (!IsValidLayer(layer))
+            {
+                LogError("Layer index out of range");
+                return false;
+            }
+
+            if (data.animation == Animations.RESET)
+            {
+                DefaultAnimation(layer);
+                return false;
+            }
+
+            if (layerLocked[layer] || currentAnimation[layer] == data.animation) return false;
+
+            if (currentCoroutines[layer] != null) StopCoroutine(currentCoroutines[layer]);
+            layerLocked[layer] = data.lockLayer;
+            currentAnimation[layer] = data.animation;
+
+            animator.CrossFade(AnimatorValues.GetHash(currentAnimation[layer]), data.crossfade, layer);
+
+            if (data.nextAnimation != null)
+            {
+                currentCoroutines[layer] = StartCoroutine(WaitForThenPlayNext(data, layer));
+            }
+
+            return true;
+        }
+
+        private IEnumerator WaitForThenPlayNext(AnimationData data, int layer)
+        {
+            // Wait one frame so the Animator can evaluate transitions / next state.
+            // This is more reliable than reading GetNextAnimatorStateInfo immediately after CrossFade.
+            yield return null;
+
+            animator.Update(0);
+
+            float length = animator.GetNextAnimatorStateInfo(layer).length;
+            if (data.crossfade == 0) length = animator.GetCurrentAnimatorStateInfo(layer).length;
+
+            // If nextAnimation.crossfade exceeds the clip length, clamp to 0 to avoid negative waits.
+            float waitSeconds = Mathf.Max(0f, length - data.nextAnimation.crossfade);
+            yield return new WaitForSeconds(waitSeconds);
+
+            SetLocked(false, layer);
+            Play(data.nextAnimation, layer);
         }
 
         private void LogError(string message)
         {
             Debug.LogError("AnimatorCoder Error: " + message);
+        }
+
+        private bool IsValidLayer(int layer)
+        {
+            return isInitialized && animator != null && layerLocked != null && currentAnimation != null && layer >= 0 && layer < animator.layerCount;
+        }
+
+        private void OnDisable()
+        {
+            if (currentCoroutines == null) return;
+            for (int i = 0; i < currentCoroutines.Length; ++i)
+            {
+                if (currentCoroutines[i] != null) StopCoroutine(currentCoroutines[i]);
+                currentCoroutines[i] = null;
+            }
         }
     }
 
@@ -208,8 +266,8 @@ namespace SHG.AnimatorCoder
         }
     }
 
-    /// <summary> Class the manages the hashes of animations and parameters </summary>
-    public class AnimatorValues
+    /// <summary> Maintains cached hashes for <see cref="Animations"/> to avoid repeated hashing. </summary>
+    public static class AnimatorValues
     {
         /// <summary> Returns the animation hash array </summary>
         public static int[] Animations { get { return animations; } }
@@ -235,8 +293,6 @@ namespace SHG.AnimatorCoder
         {
             return animations[(int)animation];
         }
-
-
     }
 
     /// <summary> Allows the animation parameters to be shown in debug inspector </summary>
